@@ -13,10 +13,10 @@ This Python script scrapes data from specified B2B event websites and compiles t
 
 ### Running the Script
 
-1. Copy the provided Python script (`scrape_b2b_events.py`) into a directory on your machine.
+1. Copy the provided Python script (`b2b_events.py`) into a directory on your machine.
 2. Update the `event_urls` list in the script with URLs of the B2B events you want to scrape.
 3. Open a terminal or command prompt.
-4. Navigate to the directory where you saved `scrape_b2b_events.py`.
+4. Navigate to the directory where you saved `b2b_events.py`.
 5. Run the script:
 
 
