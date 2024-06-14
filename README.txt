@@ -45,4 +45,4 @@ The script collects the following information for each event:
 
 ## Support
 
-For any issues or questions regarding this script, please contact [your_email@example.com].
+For any issues or questions regarding this script, please contact [swapnanilmandal681@gmail.com].
