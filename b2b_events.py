@@ -1,7 +1,11 @@
-import requests
-from bs4 import BeautifulSoup
+import asyncio
+import aiohttp
 import csv
-import re
+import logging
+from bs4 import BeautifulSoup
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # List of event URLs
 event_urls = [
@@ -12,130 +16,71 @@ event_urls = [
     'https://www.ces.tech/'
 ]
 
-# Function to scrape event data with improved error handling
-def scrape_event_data(url):
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-    
+async def fetch(url, session):
     try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()  # Raise HTTPError for bad responses
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching {url}: {e}")
+        async with session.get(url) as response:
+            return await response.text()
+    except aiohttp.ClientError as e:
+        logger.error(f"Error fetching {url}: {e}")
         return None
-    
-    soup = BeautifulSoup(response.text, 'html.parser')
 
-    # Initialize variables with default values
-    event_name = 'N/A'
-    event_date = 'N/A'
-    location = 'N/A'
-    description = 'N/A'
-    key_speakers = []
-    agenda = []
-    registration_details = 'N/A'
-    pricing = 'N/A'
-    categories = []
-    audience_type = 'N/A'
-
-    # Extract data with improved error handling
+async def scrape_event_data(url, session):
     try:
-        title_tag = soup.find('title')
-        if title_tag:
-            event_name = title_tag.text.strip()
-    except AttributeError as e:
-        print(f"Error extracting event name: {e}")
+        html = await fetch(url, session)
+        if not html:
+            return None
 
-    try:
-        date_meta = soup.find('meta', {'name': 'date'})
-        if date_meta:
-            event_date = date_meta['content'].strip()
-    except (AttributeError, KeyError) as e:
-        print(f"Error extracting event date: {e}")
+        soup = BeautifulSoup(html, 'html.parser')
 
-    try:
-        location_meta = soup.find('meta', {'name': 'location'})
-        if location_meta:
-            location = location_meta['content'].strip()
-    except (AttributeError, KeyError) as e:
-        print(f"Error extracting location: {e}")
-
-    try:
-        description_meta = soup.find('meta', {'name': 'description'})
-        if description_meta:
-            description = description_meta['content'].strip()
-    except (AttributeError, KeyError) as e:
-        print(f"Error extracting description: {e}")
-
-    try:
+        event_name = soup.title.text.strip() if soup.title else 'N/A'
+        event_date = soup.find('meta', {'name': 'date'})['content'].strip() if soup.find('meta', {'name': 'date'}) else 'N/A'
+        location = soup.find('meta', {'name': 'location'})['content'].strip() if soup.find('meta', {'name': 'location'}) else 'N/A'
+        description = soup.find('meta', {'name': 'description'})['content'].strip() if soup.find('meta', {'name': 'description'}) else 'N/A'
         key_speakers = [speaker.get_text(strip=True) for speaker in soup.select('.speaker-name')]
-    except Exception as e:
-        print(f"Error extracting key speakers: {e}")
-
-    try:
         agenda = [item.get_text(strip=True) for item in soup.select('.agenda-item')]
-    except Exception as e:
-        print(f"Error extracting agenda: {e}")
-
-    try:
-        registration_link = soup.find('a', class_='registration-link')
-        if registration_link:
-            registration_details = registration_link['href'].strip()
-    except (AttributeError, KeyError) as e:
-        print(f"Error extracting registration details: {e}")
-
-    try:
-        pricing_div = soup.find('div', class_='pricing')
-        if pricing_div:
-            pricing = pricing_div.get_text(strip=True)
-    except AttributeError as e:
-        print(f"Error extracting pricing: {e}")
-
-    try:
+        registration_details = soup.find('a', class_='registration-link')['href'].strip() if soup.find('a', class_='registration-link') else 'N/A'
+        pricing = soup.find('div', class_='pricing').get_text(strip=True) if soup.find('div', class_='pricing') else 'N/A'
         categories = [category.get_text(strip=True) for category in soup.select('.category')]
+        audience_type = soup.find('meta', {'name': 'audience'})['content'].strip() if soup.find('meta', {'name': 'audience'}) else 'N/A'
+
+        return {
+            'Event Name': event_name,
+            'Event Date(s)': event_date,
+            'Location': location,
+            'Website URL': url,
+            'Description': description,
+            'Key Speakers': ', '.join(key_speakers),
+            'Agenda/Schedule': ', '.join(agenda),
+            'Registration Details': registration_details,
+            'Pricing': pricing,
+            'Categories': ', '.join(categories),
+            'Audience Type': audience_type
+        }
     except Exception as e:
-        print(f"Error extracting categories: {e}")
+        logger.error(f"Error scraping {url}: {e}")
+        return None
 
+async def scrape_all_events(event_urls):
+    async with aiohttp.ClientSession() as session:
+        tasks = [scrape_event_data(url, session) for url in event_urls]
+        return await asyncio.gather(*tasks)
+
+def write_to_csv(data, filename='b2b_events.csv'):
+    fieldnames = ['Event Name', 'Event Date(s)', 'Location', 'Website URL', 'Description', 'Key Speakers', 'Agenda/Schedule', 'Registration Details', 'Pricing', 'Categories', 'Audience Type']
     try:
-        audience_meta = soup.find('meta', {'name': 'audience'})
-        if audience_meta:
-            audience_type = audience_meta['content'].strip()
-    except (AttributeError, KeyError) as e:
-        print(f"Error extracting audience type: {e}")
+        with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+            for event in data:
+                writer.writerow(event)
+        logger.info(f"Data scraped and saved to {filename}")
+    except IOError as e:
+        logger.error(f"Error writing to {filename}: {e}")
 
-    # Returning the data as a dictionary
-    return {
-        'Event Name': event_name,
-        'Event Date(s)': event_date,
-        'Location': location,
-        'Website URL': url,
-        'Description': description,
-        'Key Speakers': ', '.join(key_speakers),
-        'Agenda/Schedule': ', '.join(agenda),
-        'Registration Details': registration_details,
-        'Pricing': pricing,
-        'Categories': ', '.join(categories),
-        'Audience Type': audience_type
-    }
+async def main():
+    events_data = await scrape_all_events(event_urls)
+    clean_events_data = [event for event in events_data if event is not None]
+    write_to_csv(clean_events_data)
 
-# Scrape data for all events
-events_data = []
-for url in event_urls:
-    event_data = scrape_event_data(url)
-    if event_data:
-        events_data.append(event_data)
-    else:
-        print(f"Skipping event due to missing data: {url}")
-
-# Write data to CSV
-csv_file = 'b2b_events.csv'
-try:
-    with open(csv_file, 'w', newline='', encoding='utf-8') as csvfile:
-        fieldnames = ['Event Name', 'Event Date(s)', 'Location', 'Website URL', 'Description', 'Key Speakers', 'Agenda/Schedule', 'Registration Details', 'Pricing', 'Categories', 'Audience Type']
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-
-        writer.writeheader()
-        for event in events_data:
-            writer.writerow(event)
-    print(f"Data scraped and saved to {csv_file}")
-except IOError:
-    print(f"Error writing to {csv_file}")
+if __name__ == "__main__":
+    asyncio.run(main())
